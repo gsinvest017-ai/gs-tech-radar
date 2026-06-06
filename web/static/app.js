@@ -103,19 +103,26 @@ function pollScanStatus(repoId) {
 
 // ── Data refresh ──────────────────────────────────────────────────────────────
 async function refreshAll() {
-  const [repos, techs, dashboard, analyses] = await Promise.all([
+  // Fetch core data; /api/analyses is best-effort (may not exist on older server)
+  const [repos, techs, dashboard] = await Promise.all([
     GET('/api/repos'),
     GET('/api/techs'),
     GET('/api/dashboard'),
-    GET('/api/analyses'),
   ]);
   state.repos = repos;
   state.techs = techs;
   state.dashboard = dashboard;
-  // Merge DB analyses into cache (don't overwrite session-fresh ones)
-  for (const [name, a] of Object.entries(analyses)) {
-    if (!state.analysisCache[name]) state.analysisCache[name] = a;
-  }
+
+  // Merge DB-persisted analyses into session cache (non-critical, skip on error)
+  try {
+    const analyses = await GET('/api/analyses');
+    if (analyses && typeof analyses === 'object' && !Array.isArray(analyses)) {
+      for (const [name, a] of Object.entries(analyses)) {
+        if (!state.analysisCache[name]) state.analysisCache[name] = a;
+      }
+    }
+  } catch (_) {}
+
   renderTopStats();
   renderRepoList();
   renderTechSidebar();
@@ -790,7 +797,11 @@ function renderSOAGrid() {
     }
   } catch (_) {}
 
-  await refreshAll();
+  try {
+    await refreshAll();
+  } catch (e) {
+    toast(`載入失敗: ${e.message}`, 'error');
+  }
   // Resume polling for any repos already scanning from a previous session
   for (const r of state.repos) {
     if (r.scan_status === 'running') pollScanStatus(r.id);
