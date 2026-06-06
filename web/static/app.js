@@ -62,14 +62,23 @@ async function addRepo() {
   const url = input.value.trim();
   if (!url) return;
   try {
-    const r = await POST('/api/repos', { url });
-    toast(`Repo added (id=${r.id}). Scanning in background…`, 'info');
+    // Import metadata only — user clicks the card to trigger scan
+    const r = await POST('/api/repos', { url, auto_scan: false });
+    toast(r.status === 'exists' ? `Already imported: id=${r.id}` : `Imported — click the card to scan`, 'info');
     input.value = '';
     await refreshAll();
-    if (r.status !== 'exists') pollScanStatus(r.id);
   } catch (e) {
     toast(e.message, 'error');
   }
+}
+
+async function triggerScan(repoId) {
+  const r = state.repos.find(r => r.id === repoId);
+  if (!r) return;
+  await POST(`/api/repos/${repoId}/scan`);
+  toast(`Scanning ${r.owner}/${r.name}…`, 'info');
+  pollScanStatus(repoId);
+  await refreshAll();
 }
 
 function pollScanStatus(repoId) {
@@ -125,24 +134,30 @@ function renderRepoList() {
     el.innerHTML = '<div style="padding:12px 14px;font-size:12px;color:var(--fg-dim)">No repos yet</div>';
     return;
   }
-  el.innerHTML = state.repos.map(r => `
-    <div class="repo-item" data-id="${r.id}" title="${r.url}">
+  el.innerHTML = state.repos.map(r => {
+    const notScanned = !r.last_scanned && r.scan_status !== 'running';
+    return `
+    <div class="repo-item ${notScanned ? 'not-scanned' : ''}" data-id="${r.id}" title="${notScanned ? 'Click to scan' : r.url}">
       <span class="scan-dot ${r.scan_status || 'none'}"></span>
       <span class="repo-item-name">${r.owner}/${r.name}</span>
-      <span class="repo-badge">${r.tech_count || 0}</span>
-      <span title="Rescan" style="cursor:pointer;color:var(--fg-dim);font-size:11px" data-rescan="${r.id}">↺</span>
+      ${notScanned
+        ? `<span class="scan-cta" data-scan="${r.id}" title="Scan this repo">▷</span>`
+        : `<span class="repo-badge">${r.tech_count || 0}</span>`}
       <span title="Delete" style="cursor:pointer;color:var(--fg-dim);font-size:11px" data-delete="${r.id}">✕</span>
-    </div>
-  `).join('');
+    </div>`;
+  }).join('');
 
-  el.querySelectorAll('[data-rescan]').forEach(btn => {
+  el.querySelectorAll('[data-scan]').forEach(btn => {
     btn.addEventListener('click', async e => {
       e.stopPropagation();
-      const id = +btn.dataset.rescan;
-      await POST(`/api/repos/${id}/scan`);
-      toast('Rescanning…', 'info');
-      pollScanStatus(id);
-      await refreshAll();
+      await triggerScan(+btn.dataset.scan);
+    });
+  });
+  el.querySelectorAll('.repo-item:not(.not-scanned)').forEach(item => {
+    item.addEventListener('click', () => {
+      const id = +item.dataset.id;
+      const r = state.repos.find(r => r.id === id);
+      if (r) window.open(r.url, '_blank');
     });
   });
   el.querySelectorAll('[data-delete]').forEach(btn => {
@@ -183,11 +198,23 @@ function renderOverviewCards() {
   empty.style.display = 'none';
   const cards = state.repos.map(r => {
     const m = r.metrics || {};
+    const notScanned = !r.last_scanned && r.scan_status !== 'running';
+    const isRunning = r.scan_status === 'running';
     const techTags = (r.techs || []).slice(0, 6).map(t =>
       `<span class="tech-tag">${t.name}</span>`
     ).join('');
+
+    const techArea = notScanned
+      ? `<div class="repo-card-unscan">
+           <button class="btn btn-gold btn-sm" data-scan="${r.id}">▷ Scan this repo</button>
+           <span style="font-size:11px;color:var(--fg-dim);margin-left:8px">not scanned yet</span>
+         </div>`
+      : isRunning
+        ? `<div class="repo-card-techs"><span class="spinner"></span><span style="font-size:11px;color:var(--amber);margin-left:8px">scanning…</span></div>`
+        : `<div class="repo-card-techs">${techTags || '<span style="color:var(--fg-dim);font-size:11px">no techs detected</span>'}</div>`;
+
     return `
-    <div class="repo-card" data-id="${r.id}">
+    <div class="repo-card ${notScanned ? 'repo-card-dim' : ''}" data-id="${r.id}">
       <div class="repo-card-header">
         <div>
           <div class="repo-card-title">${r.name}</div>
@@ -195,11 +222,12 @@ function renderOverviewCards() {
         </div>
         <div class="card-actions">
           <button class="btn btn-ghost btn-sm" onclick="window.open('${r.url}','_blank')">↗</button>
-          <button class="btn btn-ghost btn-sm" data-rescan="${r.id}">↺</button>
+          ${!notScanned ? `<button class="btn btn-ghost btn-sm" data-rescan="${r.id}" title="Re-scan">↺</button>` : ''}
         </div>
       </div>
       ${r.description ? `<div class="repo-card-desc">${r.description}</div>` : ''}
-      <div class="repo-card-techs">${techTags || '<span style="color:var(--fg-dim);font-size:11px">Scanning…</span>'}</div>
+      ${techArea}
+      ${!notScanned ? `
       <div class="repo-card-metrics">
         <div class="metric-item"><div class="metric-val">${fmt(r.stars || 0)}</div><div class="metric-label">Stars</div></div>
         <div class="metric-item"><div class="metric-val">${fmt(m.commits_total || 0)}</div><div class="metric-label">Commits</div></div>
@@ -207,21 +235,28 @@ function renderOverviewCards() {
         <div class="metric-item"><div class="metric-val">${fmt(m.contributors_count || 0)}</div><div class="metric-label">Contributors</div></div>
         <div class="metric-item"><div class="metric-val">${fmt(m.issues_closed || 0)}</div><div class="metric-label">Issues closed</div></div>
         <div class="metric-item"><div class="metric-val">${fmt(r.forks || 0)}</div><div class="metric-label">Forks</div></div>
-      </div>
+      </div>` : `
+      <div style="display:flex;gap:12px;margin-top:8px">
+        <div class="metric-item"><div class="metric-val" style="font-size:18px">${fmt(r.stars || 0)}</div><div class="metric-label">Stars</div></div>
+        <div class="metric-item"><div class="metric-val" style="font-size:18px">${fmt(r.forks || 0)}</div><div class="metric-label">Forks</div></div>
+        ${r.language ? `<div class="metric-item"><div style="font-size:13px;color:var(--bronze)">${r.language}</div><div class="metric-label">Language</div></div>` : ''}
+      </div>`}
     </div>`;
   }).join('');
 
-  // Replace only card content (keep empty state el)
   Array.from(grid.children).forEach(c => { if (c !== empty) c.remove(); });
   grid.insertAdjacentHTML('afterbegin', cards);
 
+  grid.querySelectorAll('[data-scan]').forEach(btn => {
+    btn.addEventListener('click', async e => {
+      e.stopPropagation();
+      await triggerScan(+btn.dataset.scan);
+    });
+  });
   grid.querySelectorAll('[data-rescan]').forEach(btn => {
     btn.addEventListener('click', async e => {
       e.stopPropagation();
-      const id = +btn.dataset.rescan;
-      await POST(`/api/repos/${id}/scan`);
-      toast('Rescanning…', 'info');
-      pollScanStatus(id);
+      await triggerScan(+btn.dataset.rescan);
     });
   });
 }
@@ -716,7 +751,7 @@ function renderSOAGrid() {
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 (async () => {
-  // Show logged-in gh user next to the input label
+  // Resolve logged-in gh user → show badge + auto-import all owner repos
   try {
     const me = await GET('/api/me');
     if (me.login) {
@@ -724,10 +759,17 @@ function renderSOAGrid() {
       if (badge) badge.textContent = `@${me.login}`;
       const input = document.getElementById('repo-url-input');
       if (input) input.placeholder = `repo-name 或 ${me.login}/repo`;
+
+      // Auto-import all repos for this owner (metadata only, no scan)
+      const result = await POST(`/api/import-owner/${me.login}`);
+      if (result.imported > 0) {
+        toast(`匯入 ${result.imported} 個 ${me.login} 的 repo，點擊 ▷ 開始掃描`, 'info');
+      }
     }
   } catch (_) {}
 
   await refreshAll();
+  // Resume polling for any repos already scanning from a previous session
   for (const r of state.repos) {
     if (r.scan_status === 'running') pollScanStatus(r.id);
   }

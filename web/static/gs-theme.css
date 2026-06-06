@@ -143,6 +143,17 @@ html, body {
 .scan-dot.error { background: var(--danger); }
 .scan-dot.none { background: var(--fg-dim); }
 
+.repo-item.not-scanned .repo-item-name { color: var(--fg-dim); }
+.scan-cta {
+  font-size: 13px; color: var(--gold); cursor: pointer; flex-shrink: 0;
+  transition: color .15s;
+}
+.scan-cta:hover { color: var(--gold-light); }
+
+.repo-card-dim { opacity: 0.75; }
+.repo-card-dim:hover { opacity: 1; }
+.repo-card-unscan { display: flex; align-items: center; margin-bottom: 10px; }
+
 @keyframes pulse {
   0%,100% { opacity: 1; } 50% { opacity: .3; }
 }
