@@ -49,9 +49,24 @@ class AddRepoRequest(BaseModel):
     url: str
 
 
+@app.get("/api/me")
+async def current_user():
+    """Return the currently authenticated gh CLI username."""
+    user = gh_scanner.get_current_gh_user()
+    return {"login": user}
+
+
 @app.post("/api/repos")
 async def add_repo(req: AddRepoRequest, bg: BackgroundTasks):
     url = req.url.strip()
+
+    # If input has no '/', treat it as a bare repo name and prepend current gh user
+    if url and "/" not in url.lstrip("https://").lstrip("http://"):
+        owner = gh_scanner.get_current_gh_user()
+        if not owner:
+            raise HTTPException(400, "Cannot detect logged-in gh user. Use owner/repo format instead.")
+        url = f"{owner}/{url}"
+
     try:
         owner, repo_name = gh_scanner.parse_repo_url(url)
     except ValueError as e:

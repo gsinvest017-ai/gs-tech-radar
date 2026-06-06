@@ -21,6 +21,28 @@ def _gh_token() -> str:
     return ""
 
 
+_CURRENT_USER: str = ""
+
+
+def get_current_gh_user() -> str:
+    """Return the currently authenticated gh CLI username (cached)."""
+    global _CURRENT_USER
+    if _CURRENT_USER:
+        return _CURRENT_USER
+    try:
+        result = subprocess.run(
+            ["gh", "api", "user", "--jq", ".login"],
+            capture_output=True, text=True, timeout=10
+        )
+        user = result.stdout.strip()
+        if user:
+            _CURRENT_USER = user
+            return user
+    except Exception:
+        pass
+    return ""
+
+
 _TOKEN: str = ""
 
 

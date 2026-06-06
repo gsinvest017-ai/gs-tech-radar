@@ -716,8 +716,18 @@ function renderSOAGrid() {
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 (async () => {
+  // Show logged-in gh user next to the input label
+  try {
+    const me = await GET('/api/me');
+    if (me.login) {
+      const badge = document.getElementById('gh-user-badge');
+      if (badge) badge.textContent = `@${me.login}`;
+      const input = document.getElementById('repo-url-input');
+      if (input) input.placeholder = `repo-name 或 ${me.login}/repo`;
+    }
+  } catch (_) {}
+
   await refreshAll();
-  // Resume polling for any repos that are still scanning
   for (const r of state.repos) {
     if (r.scan_status === 'running') pollScanStatus(r.id);
   }
