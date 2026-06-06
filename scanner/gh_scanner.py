@@ -81,6 +81,39 @@ def parse_repo_url(url: str) -> tuple[str, str]:
     raise ValueError(f"Cannot parse repo URL: {url!r}")
 
 
+async def fetch_owner_repos(owner: str, max_pages: int = 10) -> list[dict]:
+    """Return metadata for all public repos owned by `owner` (up to max_pages×100)."""
+    results: list[dict] = []
+    async with httpx.AsyncClient() as client:
+        for page in range(1, max_pages + 1):
+            data = await _get(
+                client,
+                f"https://api.github.com/users/{owner}/repos"
+                f"?per_page=100&page={page}&sort=pushed&type=owner",
+            )
+            if not data or not isinstance(data, list):
+                break
+            for r in data:
+                repo_name = r.get("name", "")
+                if not repo_name:
+                    continue
+                results.append({
+                    "url": f"https://github.com/{owner}/{repo_name}",
+                    "owner": owner,
+                    "name": repo_name,
+                    "description": r.get("description") or "",
+                    "stars": r.get("stargazers_count", 0),
+                    "forks": r.get("forks_count", 0),
+                    "language": r.get("language") or "",
+                    "topics": r.get("topics") or [],
+                    "created_at": r.get("created_at", ""),
+                    "updated_at": r.get("pushed_at", ""),
+                })
+            if len(data) < 100:
+                break  # last page
+    return results
+
+
 async def fetch_repo_info(owner: str, repo: str) -> dict:
     async with httpx.AsyncClient() as client:
         data = await _get(client, f"https://api.github.com/repos/{owner}/{repo}")
