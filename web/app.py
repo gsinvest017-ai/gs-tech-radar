@@ -47,6 +47,7 @@ async def index():
 
 class AddRepoRequest(BaseModel):
     url: str
+    auto_scan: bool = True  # set False to import metadata only, no tech scan
 
 
 @app.get("/api/me")
@@ -75,6 +76,9 @@ async def add_repo(req: AddRepoRequest, bg: BackgroundTasks):
     canonical = f"https://github.com/{owner}/{repo_name}"
     existing = await db.get_repo_by_url(canonical)
     if existing:
+        if req.auto_scan and not existing.get("last_scanned"):
+            bg.add_task(_run_full_scan, existing["id"], owner, repo_name)
+            return {"id": existing["id"], "status": "scanning"}
         return {"id": existing["id"], "status": "exists"}
 
     # Fetch basic info first (fast)
@@ -83,8 +87,26 @@ async def add_repo(req: AddRepoRequest, bg: BackgroundTasks):
         raise HTTPException(404, f"Repo {owner}/{repo_name} not found or not accessible")
 
     repo_id = await db.upsert_repo(info)
-    bg.add_task(_run_full_scan, repo_id, owner, repo_name)
-    return {"id": repo_id, "status": "scanning"}
+    if req.auto_scan:
+        bg.add_task(_run_full_scan, repo_id, owner, repo_name)
+        return {"id": repo_id, "status": "scanning"}
+    return {"id": repo_id, "status": "imported"}
+
+
+@app.post("/api/import-owner/{owner}")
+async def import_owner_repos(owner: str):
+    """Fetch all repos for owner and upsert metadata — no scan triggered."""
+    repo_list = await gh_scanner.fetch_owner_repos(owner)
+    imported = 0
+    skipped = 0
+    for info in repo_list:
+        existing = await db.get_repo_by_url(info["url"])
+        if existing:
+            skipped += 1
+            continue
+        await db.upsert_repo(info)
+        imported += 1
+    return {"owner": owner, "total": len(repo_list), "imported": imported, "skipped": skipped}
 
 
 @app.get("/api/repos")
