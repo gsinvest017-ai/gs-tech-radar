@@ -1,32 +1,63 @@
-"""Claude-powered technology intelligence generator.
+"""Claude Code CLI-powered technology intelligence generator.
+
+Uses `claude --print` (Claude Code CLI) — no API key required, runs under the
+user's existing Claude Code session.
 
 Generates: overview, state-of-art, alternatives comparison,
 cheatsheet (markdown), knowledge graph (nodes+edges), timeline (events).
 All output cached in SQLite via storage.db.
 """
+import asyncio
 import json
-import os
+import shutil
+import sys
 from typing import Optional
-
-import anthropic
 
 from storage import db
 
-_client: Optional[anthropic.AsyncAnthropic] = None
+# Resolve `claude` binary (handles Windows .cmd wrapper automatically)
+_CLAUDE_BIN: str = shutil.which("claude") or ("claude.cmd" if sys.platform == "win32" else "claude")
 
 
-def _get_client() -> anthropic.AsyncAnthropic:
-    global _client
-    if _client is None:
-        _client = anthropic.AsyncAnthropic(api_key=os.environ.get("ANTHROPIC_API_KEY", ""))
-    return _client
+async def _call_claude(prompt: str, timeout: int = 120) -> str:
+    """Pipe prompt to `claude --print --output-format json` and return the result text."""
+    proc = await asyncio.create_subprocess_exec(
+        _CLAUDE_BIN, "--print", "--output-format", "json",
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    try:
+        stdout, stderr = await asyncio.wait_for(
+            proc.communicate(input=prompt.encode("utf-8")),
+            timeout=timeout,
+        )
+    except asyncio.TimeoutError:
+        proc.kill()
+        raise RuntimeError(f"claude CLI timed out after {timeout}s")
+
+    if proc.returncode != 0:
+        err = stderr.decode("utf-8", errors="replace")[:600]
+        raise RuntimeError(f"claude CLI exited {proc.returncode}: {err}")
+
+    raw_output = stdout.decode("utf-8", errors="replace").strip()
+
+    # claude --output-format json wraps the reply in a JSON envelope:
+    # {"type":"result","result":"...actual text...","cost_usd":...}
+    try:
+        envelope = json.loads(raw_output)
+        if isinstance(envelope, dict) and "result" in envelope:
+            return envelope["result"]
+    except json.JSONDecodeError:
+        pass
+
+    # Fallback: raw text (e.g. older CLI versions without JSON envelope)
+    return raw_output
 
 
-_SYSTEM = """You are a technology intelligence analyst. You produce precise, structured JSON about software technologies.
-Always respond with a single valid JSON object matching the schema given in the user message.
-Be factual, concise, and use concrete version numbers and years where known."""
+_PROMPT_TEMPLATE = """You are a technology intelligence analyst. Produce ONLY a single valid JSON object — no prose, no markdown fences.
 
-_PROMPT_TEMPLATE = """Analyse the technology: "{tech}" (category: {category})
+Analyse the technology: "{tech}" (category: {category})
 
 Return a JSON object with EXACTLY these keys:
 
@@ -76,24 +107,15 @@ Return ONLY the JSON, no prose."""
 
 
 async def generate_analysis(tech_name: str, category: str) -> dict:
-    """Call Claude to generate full tech analysis. Returns parsed dict."""
-    client = _get_client()
+    """Call Claude Code CLI to generate full tech analysis. Returns parsed dict."""
     prompt = _PROMPT_TEMPLATE.format(tech=tech_name, category=category)
+    raw = await _call_claude(prompt)
 
-    message = await client.messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=4096,
-        system=_SYSTEM,
-        messages=[{"role": "user", "content": prompt}],
-    )
-
-    raw = message.content[0].text.strip()
     # Strip any accidental markdown fences
+    raw = raw.strip()
     if raw.startswith("```"):
         raw = raw.split("\n", 1)[1] if "\n" in raw else raw[3:]
-        if raw.endswith("```"):
-            raw = raw[:-3]
-        raw = raw.strip()
+        raw = raw.rstrip("`").strip()
 
     return json.loads(raw)
 
