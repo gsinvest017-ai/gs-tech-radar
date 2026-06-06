@@ -169,14 +169,29 @@ async def list_techs():
     return await db.list_techs()
 
 
+@app.get("/api/analyses")
+async def list_analyses():
+    """Return all tech analyses that exist in the DB, keyed by tech name."""
+    techs = await db.list_techs()
+    result: dict = {}
+    for t in techs:
+        a = await db.get_tech_analysis(t["id"])
+        if a and a.get("overview"):
+            result[t["name"]] = a
+    return result
+
+
 @app.get("/api/techs/{tech_name}/analysis")
 async def tech_analysis(tech_name: str):
     techs = await db.list_techs()
     tech = next((t for t in techs if t["name"].lower() == tech_name.lower()), None)
     if not tech:
-        raise HTTPException(404, f"Tech {tech_name!r} not found in DB")
-    result = await analyzer.get_or_generate(tech["id"], tech["name"], tech["category"])
-    return result
+        raise HTTPException(404, f"Tech {tech_name!r} not found in DB — scan a repo that uses it first")
+    try:
+        result = await analyzer.get_or_generate(tech["id"], tech["name"], tech["category"])
+        return result
+    except Exception as exc:
+        raise HTTPException(500, f"Analysis generation failed: {exc}")
 
 
 @app.post("/api/techs/{tech_name}/regenerate")

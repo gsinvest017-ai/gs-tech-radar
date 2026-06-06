@@ -106,18 +106,41 @@ For timeline: include at least 5 events from creation to present.
 Return ONLY the JSON, no prose."""
 
 
+def _extract_json(raw: str) -> dict:
+    """Robustly extract a JSON object from raw text that may contain prose or fences."""
+    raw = raw.strip()
+
+    # Strip markdown code fences
+    if raw.startswith("```"):
+        lines = raw.split("\n")
+        # drop first line (```json or ```) and trailing ```
+        inner = "\n".join(lines[1:])
+        inner = inner.rstrip("`").strip()
+        raw = inner
+
+    # Try direct parse first
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        pass
+
+    # Find first '{' … last '}' — handles leading/trailing prose
+    start = raw.find("{")
+    end = raw.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        try:
+            return json.loads(raw[start : end + 1])
+        except json.JSONDecodeError:
+            pass
+
+    raise ValueError(f"No valid JSON found in Claude output (first 200 chars): {raw[:200]!r}")
+
+
 async def generate_analysis(tech_name: str, category: str) -> dict:
     """Call Claude Code CLI to generate full tech analysis. Returns parsed dict."""
     prompt = _PROMPT_TEMPLATE.format(tech=tech_name, category=category)
     raw = await _call_claude(prompt)
-
-    # Strip any accidental markdown fences
-    raw = raw.strip()
-    if raw.startswith("```"):
-        raw = raw.split("\n", 1)[1] if "\n" in raw else raw[3:]
-        raw = raw.rstrip("`").strip()
-
-    return json.loads(raw)
+    return _extract_json(raw)
 
 
 async def get_or_generate(tech_id: int, tech_name: str, category: str) -> dict:
