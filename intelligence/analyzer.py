@@ -8,51 +8,60 @@ cheatsheet (markdown), knowledge graph (nodes+edges), timeline (events).
 All output cached in SQLite via storage.db.
 """
 import asyncio
+import concurrent.futures
 import json
 import shutil
+import subprocess
 import sys
 from typing import Optional
 
 from storage import db
 
-# Resolve `claude` binary (handles Windows .cmd wrapper automatically)
+# Resolve `claude` binary at import time
 _CLAUDE_BIN: str = shutil.which("claude") or ("claude.cmd" if sys.platform == "win32" else "claude")
 
+# Thread pool for blocking subprocess calls (avoids Windows asyncio subprocess issues)
+_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=3, thread_name_prefix="claude-worker")
 
-async def _call_claude(prompt: str, timeout: int = 120) -> str:
-    """Pipe prompt to `claude --print --output-format json` and return the result text."""
-    proc = await asyncio.create_subprocess_exec(
-        _CLAUDE_BIN, "--print", "--output-format", "json",
-        stdin=asyncio.subprocess.PIPE,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
+
+def _run_claude_sync(prompt_bytes: bytes, timeout: int) -> str:
+    """Synchronous wrapper — runs in a thread pool to stay non-blocking."""
     try:
-        stdout, stderr = await asyncio.wait_for(
-            proc.communicate(input=prompt.encode("utf-8")),
+        result = subprocess.run(
+            [_CLAUDE_BIN, "--print", "--output-format", "json"],
+            input=prompt_bytes,
+            capture_output=True,
             timeout=timeout,
         )
-    except asyncio.TimeoutError:
-        proc.kill()
+    except subprocess.TimeoutExpired:
         raise RuntimeError(f"claude CLI timed out after {timeout}s")
+    except FileNotFoundError:
+        raise RuntimeError(f"claude CLI not found at {_CLAUDE_BIN!r}. Make sure Claude Code is installed and on PATH.")
+    except Exception as exc:
+        raise RuntimeError(f"claude CLI failed to start: {type(exc).__name__}: {exc}")
 
-    if proc.returncode != 0:
-        err = stderr.decode("utf-8", errors="replace")[:600]
-        raise RuntimeError(f"claude CLI exited {proc.returncode}: {err}")
+    if result.returncode != 0:
+        err = result.stderr.decode("utf-8", errors="replace")[:600]
+        raise RuntimeError(f"claude CLI exited {result.returncode}: {err or '(no stderr)'}")
 
-    raw_output = stdout.decode("utf-8", errors="replace").strip()
+    raw = result.stdout.decode("utf-8", errors="replace").strip()
 
-    # claude --output-format json wraps the reply in a JSON envelope:
-    # {"type":"result","result":"...actual text...","cost_usd":...}
+    # claude --output-format json wraps the reply:
+    # {"type":"result","result":"...actual text..."}
     try:
-        envelope = json.loads(raw_output)
+        envelope = json.loads(raw)
         if isinstance(envelope, dict) and "result" in envelope:
             return envelope["result"]
     except json.JSONDecodeError:
         pass
 
-    # Fallback: raw text (e.g. older CLI versions without JSON envelope)
-    return raw_output
+    return raw  # older CLI versions without JSON envelope
+
+
+async def _call_claude(prompt: str, timeout: int = 120) -> str:
+    """Call claude CLI in a thread pool to avoid asyncio subprocess issues on Windows."""
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(_POOL, _run_claude_sync, prompt.encode("utf-8"), timeout)
 
 
 _PROMPT_TEMPLATE = """You are a technology intelligence analyst. Produce ONLY a single valid JSON object — no prose, no markdown fences.

@@ -191,7 +191,7 @@ async def tech_analysis(tech_name: str):
         result = await analyzer.get_or_generate(tech["id"], tech["name"], tech["category"])
         return result
     except Exception as exc:
-        raise HTTPException(500, f"Analysis generation failed: {exc}")
+        raise HTTPException(500, f"Analysis generation failed [{type(exc).__name__}]: {exc}")
 
 
 @app.post("/api/techs/{tech_name}/regenerate")
