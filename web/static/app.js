@@ -103,11 +103,19 @@ function pollScanStatus(repoId) {
 
 // ── Data refresh ──────────────────────────────────────────────────────────────
 async function refreshAll() {
-  [state.repos, state.techs, state.dashboard] = await Promise.all([
+  const [repos, techs, dashboard, analyses] = await Promise.all([
     GET('/api/repos'),
     GET('/api/techs'),
     GET('/api/dashboard'),
+    GET('/api/analyses'),
   ]);
+  state.repos = repos;
+  state.techs = techs;
+  state.dashboard = dashboard;
+  // Merge DB analyses into cache (don't overwrite session-fresh ones)
+  for (const [name, a] of Object.entries(analyses)) {
+    if (!state.analysisCache[name]) state.analysisCache[name] = a;
+  }
   renderTopStats();
   renderRepoList();
   renderTechSidebar();
@@ -363,13 +371,12 @@ function initKG() {
 async function loadKGForTech(techName) {
   switchToTab('kg');
   try {
-    const analysis = state.analysisCache[techName];
-    if (!analysis) {
-      toast('Generate analysis first', 'info');
+    // Fetch KG from server (works even if not in session cache — DB has it)
+    const kg = await GET(`/api/kg?techs=${encodeURIComponent(techName)}`);
+    if (!kg.nodes || !kg.nodes.length) {
+      toast('No KG data yet — generate analysis first', 'info');
       return;
     }
-    // Fetch merged KG from server
-    const kg = await GET(`/api/kg?techs=${encodeURIComponent(techName)}`);
     renderKG(kg);
   } catch (e) {
     toast(e.message, 'error');
@@ -377,10 +384,13 @@ async function loadKGForTech(techName) {
 }
 
 document.getElementById('kg-load-all-btn').addEventListener('click', async () => {
-  const analyzedTechs = Object.keys(state.analysisCache).join(',');
-  if (!analyzedTechs) { toast('No analyses yet', 'info'); return; }
   try {
-    const kg = await GET(`/api/kg?techs=${encodeURIComponent(analyzedTechs)}`);
+    // Call /api/kg with no filter — backend reads all analyzed techs from DB
+    const kg = await GET('/api/kg');
+    if (!kg.nodes || !kg.nodes.length) {
+      toast('No analyses in DB yet — scan a repo and generate analysis first', 'info');
+      return;
+    }
     renderKG(kg);
   } catch (e) {
     toast(e.message, 'error');
@@ -590,17 +600,21 @@ function refreshCmpSelect() {
   const sel = document.getElementById('cmp-select');
   const cur = sel.value;
   sel.innerHTML = '<option value="">— pick a technology —</option>';
-  for (const name of Object.keys(state.analysisCache)) {
+
+  // Analysed techs first
+  const analysed = new Set(Object.keys(state.analysisCache));
+  for (const name of analysed) {
     const opt = document.createElement('option');
     opt.value = name; opt.textContent = name;
     if (name === cur) opt.selected = true;
     sel.appendChild(opt);
   }
-  // Also populate with all techs
+  // Remaining techs (no analysis yet — will need generation)
   for (const t of state.techs) {
-    if (!state.analysisCache[t.name]) {
+    if (!analysed.has(t.name)) {
       const opt = document.createElement('option');
-      opt.value = t.name; opt.textContent = `${t.name} (no analysis)`;
+      opt.value = t.name; opt.textContent = `${t.name} (generate first)`;
+      if (t.name === cur) opt.selected = true;
       sel.appendChild(opt);
     }
   }
@@ -611,13 +625,21 @@ document.getElementById('cmp-load-btn').addEventListener('click', async () => {
   const name = sel.value;
   if (!name) return;
 
+  const el = document.getElementById('cmp-content');
   let analysis = state.analysisCache[name];
+
   if (!analysis) {
+    // Not in cache — try DB via API (will generate if needed)
+    el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;padding:20px"><span class="spinner"></span> Generating analysis for <strong style="color:var(--gold)">${name}</strong>… (~20s)</div>`;
     try {
       analysis = await GET(`/api/techs/${encodeURIComponent(name)}/analysis`);
       state.analysisCache[name] = analysis;
     } catch (e) {
-      toast(e.message, 'error'); return;
+      el.innerHTML = `<div style="color:var(--danger);padding:20px">
+        <strong>Error:</strong> ${e.message}<br>
+        <span style="font-size:12px;color:var(--fg-dim)">Try scanning a repo that uses ${name} first, then generate analysis from the tech drawer.</span>
+      </div>`;
+      return;
     }
   }
 
@@ -625,7 +647,7 @@ document.getElementById('cmp-load-btn').addEventListener('click', async () => {
   const cmpArr = typeof comparison === 'string' ? JSON.parse(comparison) : comparison;
 
   if (!cmpArr.length) {
-    document.getElementById('cmp-content').innerHTML = '<div style="color:var(--fg-dim);text-align:center;margin-top:40px">No comparison data.</div>';
+    el.innerHTML = '<div style="color:var(--fg-dim);text-align:center;margin-top:40px">No comparison data in this analysis. Try regenerating.</div>';
     return;
   }
 
