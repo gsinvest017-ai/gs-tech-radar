@@ -6,6 +6,26 @@
 完全重用 [gs-tech-radar](../) 的偵測規則（`scanner/tech_detector.py`）與分析器
 （`intelligence/analyzer.py`），不在 TS 端重寫，規則只有一份、不會分歧。
 
+## 快速開始
+
+> **本 extension 沒有常駐後端 server**——掃描與 cheatsheet 都是執行指令時
+> 即時 subprocess 呼叫 `python` + `claude`。所以不用「啟動後端」，只要確認環境就緒。
+
+**① 就緒自檢**（確認 python / claude / bridge 都 OK）：
+```powershell
+cd C:\Users\User\gs-tech-radar\vscode-extension
+.\check-prereqs.ps1              # Windows
+```
+```bash
+bash check-prereqs.sh            # Linux / macOS / WSL
+```
+
+**② 啟動**：VSCode 開啟本資料夾 → 按 **F5** → 在跳出的 Extension Development Host 視窗
+開任一專案。
+
+**③ 用**：點左側活動列 **雷達圖示** →「掃描技術棧」→ 點任一技術產生 AI cheatsheet
+→ 面板右上「⬇ 匯出 Markdown」。
+
 ## 功能
 
 - **掃描技術棧**：讀 workspace 的 `requirements*.txt` / `pyproject.toml` /
