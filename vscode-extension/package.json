@@ -1,0 +1,93 @@
+{
+  "name": "gs-tech-radar",
+  "displayName": "GS Tech Radar",
+  "description": "掃描目前 workspace 的技術棧，並用 Claude Code 產生每項技術的 AI cheatsheet（重用 gs-tech-radar 的偵測規則與分析器）。",
+  "version": "0.1.0",
+  "publisher": "gsinvest017-ai",
+  "license": "MIT",
+  "engines": { "vscode": "^1.75.0" },
+  "categories": ["Other", "Education"],
+  "main": "./extension.js",
+  "activationEvents": [],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "gsTechRadar",
+          "title": "Tech Radar",
+          "icon": "assets/radar.svg"
+        }
+      ]
+    },
+    "views": {
+      "gsTechRadar": [
+        {
+          "id": "gsTechRadar.techList",
+          "name": "技術棧",
+          "icon": "assets/radar.svg",
+          "contextualTitle": "GS Tech Radar"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "gsTechRadar.techList",
+        "contents": "尚未掃描此 workspace 的技術棧。\n[掃描技術棧](command:gsTechRadar.scan)\n掃完後點任一技術可產生 AI cheatsheet。"
+      }
+    ],
+    "commands": [
+      {
+        "command": "gsTechRadar.scan",
+        "title": "掃描技術棧",
+        "category": "Tech Radar",
+        "icon": "$(search)"
+      },
+      {
+        "command": "gsTechRadar.refresh",
+        "title": "重新掃描",
+        "category": "Tech Radar",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "gsTechRadar.showCheatsheet",
+        "title": "產生 AI Cheatsheet",
+        "category": "Tech Radar",
+        "icon": "$(book)"
+      },
+      {
+        "command": "gsTechRadar.exportCheatsheet",
+        "title": "匯出 Cheatsheet 為 Markdown",
+        "category": "Tech Radar"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        { "command": "gsTechRadar.refresh", "when": "view == gsTechRadar.techList", "group": "navigation" },
+        { "command": "gsTechRadar.scan", "when": "view == gsTechRadar.techList", "group": "navigation" }
+      ],
+      "view/item/context": [
+        { "command": "gsTechRadar.showCheatsheet", "when": "view == gsTechRadar.techList && viewItem == tech", "group": "inline" }
+      ]
+    },
+    "configuration": {
+      "title": "GS Tech Radar",
+      "properties": {
+        "gsTechRadar.pythonPath": {
+          "type": "string",
+          "default": "python",
+          "description": "Python 直譯器路徑（用來跑 bridge 腳本）。"
+        },
+        "gsTechRadar.techRadarRoot": {
+          "type": "string",
+          "default": "",
+          "description": "gs-tech-radar repo 根目錄（含 scanner/ intelligence/）。留空＝自動用本 extension 的上層目錄。"
+        },
+        "gsTechRadar.analyzeTimeoutSec": {
+          "type": "number",
+          "default": 120,
+          "description": "產生 cheatsheet 時呼叫 claude CLI 的逾時秒數。"
+        }
+      }
+    }
+  }
+}
