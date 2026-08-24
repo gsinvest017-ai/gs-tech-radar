@@ -1,3 +1,10 @@
+---
+type: progress
+updated: 2026-06-06
+repos: [gs-tech-radar]
+owner: Kevin
+---
+
 # Auto-owner 修正進度
 
 ## 目標
