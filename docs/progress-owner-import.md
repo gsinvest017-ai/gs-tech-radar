@@ -1,3 +1,10 @@
+---
+type: progress
+updated: 2026-06-06
+repos: [gs-tech-radar]
+owner: Kevin
+---
+
 # Owner 自動匯入所有 repo 進度
 
 ## 目標

@@ -1,3 +1,10 @@
+---
+type: progress
+updated: 2026-06-06
+repos: [gs-tech-radar]
+owner: Kevin
+---
+
 # KG / Timeline / Cheatsheet / Comparison Bug 修正
 
 ## 目標
